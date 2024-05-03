@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "camera-niu"
+version = "0.1.0"
+description = ""
+authors = ["jakha921 <jakha921@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+requests = "^2.31.0"
+django = "^5.0.4"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
