@@ -43,24 +43,18 @@ def parse_data(ip: str):
     total_data = total_data.split(' ')[1]
     print('total_data', total_data)
 
-    # count pages   24 items per page
+    # count pages 24 items per page
     pages = int(total_data) // 24
     print('pages', pages)
 
     # go to next page
-    # <span onselectstart="return false;" ng-bind="lan.nextPage" class="ng-binding ellipsis" title="Next Page">Next Page</span>
-
-    for page in range(pages):
+    for page in range(pages + 1):
         print('next page', page + 1)
 
         if page > 0:
             next_page = driver.find_element('css selector', 'span[title="Next Page"]')
             next_page.click()
             time.sleep(10)
-
-        # stop after 3 pages
-        if page == 3:
-            break
 
         # get data from table
         table_data = driver.find_elements('css selector', 'tr')
@@ -89,10 +83,10 @@ def parse_data(ip: str):
                 print('info', info)
 
     pprint(list_data)
+    print('---' * 10)
 
     # save data to file in json
-    print('save data to file')
-
+    print('saving data')
     if ip == '188':
         name = f'in_data_{date.today()}.json'
     elif ip == '189':
@@ -102,6 +96,8 @@ def parse_data(ip: str):
 
     with open(f'data/{name}', 'w') as file:
         json.dump(list_data, file, indent=4)
+
+    print(f'data saved to {name}')
 
     # close driver
     driver.quit()

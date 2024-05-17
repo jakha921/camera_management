@@ -6,16 +6,10 @@ from pprint import pprint
 
 def sort_data(ip: str):
     # get file name
-    # if ip == '188':
-    #     name = f'in_data_{date.today()}.json'
-    # elif ip == '189':
-    #     name = f'out_data_{date.today()}.json'
-    # else:
-    #     name = f'data_{date.today()}.json'
-
     name = f'in_data_{date.today()}.json' if ip == '188' else f'out_data_{date.today()}.json'
 
     # open file and read data
+    print('sorting data')
     with open(f'data/{name}', 'r') as file:
         data = json.load(file)
 
@@ -38,9 +32,13 @@ def sort_data(ip: str):
         # pprint(data)
 
         # save data to file
+        print('saving sorted data')
         filter_name = f'in_filter_{date.today()}.json' if ip == '188' else f'out_filter_{date.today()}.json'
         with open(f'data/{filter_name}', 'w') as filter_file:
             json.dump(data, filter_file, indent=4)
+
+        print(f'data saved to {filter_name}')
+        print('---' * 10)
 
         # return path
         return f'data/{filter_name}'
