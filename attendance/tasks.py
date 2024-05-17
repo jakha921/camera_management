@@ -1,22 +1,14 @@
-from datetime import date, datetime
-from unittest import TestCase
-
-from attendance.models import Attendance
-from parser_data import parse_data
-from filter_data import sort_data
+from datetime import datetime
 import time
 import json
 
+from attendance.models import Attendance
 
-def get_data():
+from filter_data import sort_data
+from parser_data import parse_data
 
-    # if now is < 12 pm get ip = 188 else get ip = 189
-    now = datetime.now()
-    if now.hour < 12:
-        ip = '188'
-    else:
-        ip = '189'
 
+def get_data(ip: str):
     parse_data(ip)
     path = sort_data(ip)
 
@@ -28,20 +20,42 @@ def get_data():
 
 
 def put_data_to_db():
-    data = get_data()
-    for item in data:
-        print('item', item)
-        # put data to db
-        Attendance.objects.create(
-            name=item['name'],
-            date=item['date'],
-            time=item['time'],
-            device_id=item['device_id']
-        )
+    try:
+        # if now is < 12 pm get ip = 188 else get ip = 189
+        now = datetime.now()
+        print('now', now)
+        if now.hour < 13:
+            ip = '188'
+        else:
+            ip = '189'
 
-        print('data saved')
+        print('ip', ip)
+        data = get_data(ip)
+        for item in data:
+            # if 09:03:00 < time < 18:00:00 then green else red
+            if item['time'] > '09:03:00' and item['time'] < '18:00:00':
+                item['status_color'] = 'red'
+            else:
+                item['status_color'] = 'green'
 
-        # remove file
+            print('item', item)
+
+            Attendance.objects.create(
+                name=item['name'],
+                date=item['date'],
+                time=item['time'],
+                device_id=item['device_id'],
+                status_color=item['status_color'],
+                is_in=True if ip == '188' else False
+            )
+
+            # remove file
+            # os.remove(path)
+
+
+    except Exception as e:
+        # type of error is not important
+        print('error', e)
 
 
 def run_parsing():
