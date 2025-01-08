@@ -75,10 +75,10 @@ WSGI_APPLICATION = 'config.wsgi.application'
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "camera_management",
-        "USER": "postgres",
-        "PASSWORD": "root",
-        "HOST": "127.0.0.1",
+        "NAME": "facecontrole",
+        "USER": "jakha",
+        "PASSWORD": "jakha123!",
+        "HOST": "213.230.69.57",
         "PORT": "5432",
     }
 }

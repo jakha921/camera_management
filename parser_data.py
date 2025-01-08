@@ -101,3 +101,8 @@ def parse_data(ip: str):
 
     # close driver
     driver.quit()
+
+
+if __name__ == '__main__':
+    # parse_data('190')
+    parse_data('191')
