@@ -1,17 +1,20 @@
 from datetime import time
+from io import BytesIO
 
 import openpyxl
-from openpyxl.styles import Font, PatternFill
-from openpyxl.utils import get_column_letter
-
+import pandas as pd
 from django.contrib import admin
-from django.db import connection
+from django.db import connection, models
+from django.forms import Textarea
 from django.http import HttpResponse
 from django.urls import reverse
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
+from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 from attendance.models import Attendance
+from attendance.utils import calculate_similarity
 
 # Register your models here.
 admin.site.site_header = 'Ishchilarning kelib ketish sistemase'
@@ -22,17 +25,29 @@ admin.site.index_title = 'Ishchilarning kelib ketish sistemase'
 @admin.register(Attendance)
 class QuestionAdmin(admin.ModelAdmin):
     # list_display = ['device_id', 'name', 'date', 'time', 'color_status']
-    list_display = ['device_id', 'name', 'date', 'min_in_time', 'max_out_time', 'working_time']
+    list_display = ['device_id', 'name', 'date', 'min_in_time', 'max_out_time', 'working_time', 'description']
     search_fields = ['name', 'device_id']
     # list_filter = ['status_color', 'is_in']
     ordering = ['-date', '-time']
     list_per_page = 15
     list_max_show_all = 100
     date_hierarchy = 'date'
-    actions = ['download_excel']
+    actions = ['download_excel', 'report_by_date']
     readonly_fields = ['device_id']
 
-    # list_editable = ['status_color']
+    list_editable = ['description']
+
+    # Уменьшаем размер поля "description"
+    formfield_overrides = {
+        models.TextField: {'widget': Textarea(attrs={'rows': 2, 'cols': 30})},
+    }
+
+    # Удаляем действие удаления
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if 'delete_selected' in actions:
+            del actions['delete_selected']
+        return actions
 
     # if user is not superuser remove clickable field
     def get_readonly_fields(self, request, obj=None):
@@ -60,7 +75,7 @@ class QuestionAdmin(admin.ModelAdmin):
         ws.title = "Attendance"
 
         # 2) Шапка
-        headers = ["№", "FIO", "Sana", "Keldi", "Ketdi", "Ish vaqti (soat)"]
+        headers = ["№", "FIO", "Sana", "Keldi", "Ketdi", "Ish vaqti (soat)", "Izoh"]
         ws.append(headers)
 
         # Настроим для шапки жирный шрифт, например
@@ -142,7 +157,8 @@ class QuestionAdmin(admin.ModelAdmin):
                 sana,  # Sana
                 keldi_str,  # Keldi
                 ketdi_str,  # Ketdi
-                ish_time_str  # Ish vaqti (soat)
+                ish_time_str,  # Ish vaqti (soat)
+                item.description,  # Izoh
             ]
             ws.append(row_values)
 
@@ -155,7 +171,7 @@ class QuestionAdmin(admin.ModelAdmin):
             # Keldi: красный, если > 9:00
             if min_time == "-":
                 pass
-            elif min_time and min_time > time(9, 0):
+            elif min_time and min_time > time(9, 5):
                 keldi_cell.fill = PatternFill("solid", fgColor="FFC7CE")  # розовато-красный
             else:
                 # Можно зелёный
@@ -188,13 +204,76 @@ class QuestionAdmin(admin.ModelAdmin):
         response = HttpResponse(
             content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        response['Content-Disposition'] = 'attachment; filename="attendance.xlsx"'
+
+        # Получение даты из параметров
+        selected_date = f"{request.GET.get('date__year', 'unknown')}-{request.GET.get('date__month', 'unknown')}-{request.GET.get('date__day', 'unknown')}"
+        if selected_date == "unknown-unknown-unknown":
+            selected_date = "attendance_report.xlsx"  # Если дата не указана, использовать дефолтное имя
+        else:
+            selected_date += "_attendance_report.xlsx"
+
+        response['Content-Disposition'] = 'attachment; filename=' + selected_date
 
         wb.save(response)
         return response
 
     # download_excel.short_description = "Выгрузить в Excel (XLSX)"
-    download_excel.short_description = 'Excelga yuklash (XLSX)'
+    download_excel.short_description = 'Davomat haqida hisobotni excelga yuklash (XLSX)'
+
+    def report_by_date(self, request, queryset):
+        """
+        Генерация отчета по отсутствующим сотрудникам.
+        """
+        # Загрузка данных
+        df_employees_data = pd.read_csv('attendance/employees_data.csv')
+        df_face_control = pd.DataFrame.from_records(
+            queryset.values('name', 'date', 'device_id')
+        )
+
+        # Получение полного списка сотрудников и присутствующих
+        all_employees = df_employees_data['last_name'] + " " + df_employees_data['first_name']
+        attended = df_face_control['name'].str.strip().drop_duplicates()
+
+        # Список отсутствующих
+        absent_employees = [
+            employee for employee in all_employees
+            if not calculate_similarity(employee, attended)
+        ]
+
+        print('-' * 20)
+        print('attended:', len(attended))
+        print('absent_employees:', len(absent_employees))
+        print('all_employees:', len(all_employees))
+
+        # Генерация DataFrame с результатами
+        report_df = pd.DataFrame({
+            'Absent Employees': absent_employees
+        })
+
+        # Сохранение в Excel
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            report_df.to_excel(writer, index=False, sheet_name='Absent Report')
+
+        # Отправка файла как ответа
+        response = HttpResponse(
+            output.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+
+        # Получение даты из параметров
+        selected_date = f"{request.GET.get('date__year', 'unknown')}-{request.GET.get('date__month', 'unknown')}-{request.GET.get('date__day', 'unknown')}"
+        if selected_date == "unknown-unknown-unknown":
+            selected_date = "absent_report.xlsx"  # Если дата не указана, использовать дефолтное имя
+        else:
+            selected_date += "_absent_report.xlsx"
+
+        print('selected_date:', selected_date)
+
+        response['Content-Disposition'] = 'attachment; filename=' + selected_date
+        return response
+
+    report_by_date.short_description = "Ro'yxatdan o'tmangan ishchilar haqida hisobotni excelga yuklash (XLSX)"
 
     def color_status(self, obj):
         if obj.status_color == 'red':
@@ -231,7 +310,7 @@ class QuestionAdmin(admin.ModelAdmin):
         min_time = row[0]
 
         # Условие: если пришёл позже 9:00
-        if min_time > time(9, 0):
+        if min_time > time(9, 5):
             color = "red"
         else:
             color = "green"
@@ -324,7 +403,7 @@ class QuestionAdmin(admin.ModelAdmin):
             return format_html("<span>-</span>")
 
         # "Обрезаем" время
-        if min_time < time(9, 0):
+        if min_time < time(9, 5):
             min_time = time(9, 0)
         if max_time > time(18, 0):
             max_time = time(18, 0)
