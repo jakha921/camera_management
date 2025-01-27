@@ -71,13 +71,14 @@ def parse_data(ip: str):
             # print('---')
 
             # ['00000011', 'Norqulov', 'Xurshid', 'Authenticated', 'via', 'Face', '2024-05-01', '05:38:12', '08:00']
-            if len(device_data) == 9 and device_data[3] == 'Authenticated':
+            if len(device_data) == 10 and device_data[4] == 'Authenticated':
                 # print('check', device_data)
                 info = {
                     'device_id': device_data[0],
                     'name': device_data[1] + ' ' + device_data[2],
-                    'date': device_data[6],
-                    'time': device_data[7]
+                    'pinfl': device_data[3],
+                    'date': device_data[7],
+                    'time': device_data[8]
                 }
                 list_data.append(info)
                 print('info', info)

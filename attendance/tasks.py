@@ -42,6 +42,7 @@ def put_data_to_db():
 
             Attendance.objects.create(
                 name=item['name'],
+                pinfl=item['pinfl'],
                 date=item['date'],
                 time=item['time'],
                 device_id=item['device_id'],

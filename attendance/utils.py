@@ -19,10 +19,10 @@ def calculate_similarity(employee, attended_list):
     for attendee in attended_list:
         similarity = fn_nltk(employee, attendee)
 
-        if 70 <= similarity <= 75:
-            # print(f"Comparing '{employee}' with '{attendee}' -> Similarity: {similarity}%")
-            pass
-        if similarity > 75:  # Порог для совпадения имен
-            # print(f"Comparing '{employee}' with '{attendee}' -> Similarity: {similarity}%")  # Отладка
+        # if 80 <= similarity <= 90:
+        #     print(f"Comparing '{employee}' with '{attendee}' -> Similarity: {similarity}%")
+        #     pass
+        if similarity > 87:  # Порог для совпадения имен
+            print(f"- Comparing '{employee}' with '{attendee}' -> Similarity: {similarity}%")  # Отладка
             return True
     return False

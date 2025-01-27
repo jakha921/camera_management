@@ -4,6 +4,7 @@ from django.db import models
 # Create your models here.
 class Attendance(models.Model):
     name = models.CharField(max_length=100, verbose_name='FIO')
+    pinfl = models.CharField(max_length=20, verbose_name='PINFL', blank=True, null=True)
     date = models.DateField(verbose_name='Sana')
     time = models.TimeField(verbose_name='Vaqt')
     device_id = models.CharField(max_length=100, verbose_name='Device ID')
