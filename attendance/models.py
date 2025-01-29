@@ -31,5 +31,33 @@ class Attendance(models.Model):
         ordering = ['-date', '-time', 'is_in']
         db_table = 'attendance'
         indexes = [
-            models.Index(fields=['date', 'time', 'device_id']),
+            models.Index(fields=['date', 'time', 'pinfl']),
+        ]
+
+
+class Employee(models.Model):
+    last_name = models.CharField(max_length=255, verbose_name='Familiya', blank=True, null=True)
+    first_name = models.CharField(max_length=255, verbose_name='Ism', blank=True, null=True)
+    middle_name = models.CharField(max_length=255, verbose_name='Otasining ismi', blank=True, null=True)
+    pinfl = models.CharField(max_length=20, verbose_name='PINFL', blank=True, null=True)
+    dob = models.DateField(verbose_name='Tug\'ilgan kun', blank=True, null=True)
+    description = models.TextField(blank=True, null=True, verbose_name='Izoh')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.last_name} {self.first_name} {self.middle_name}"
+
+    class Meta:
+        verbose_name = 'Xodim'
+        verbose_name_plural = 'Xodimlar'
+        ordering = ['last_name', 'first_name', 'middle_name']
+        db_table = 'employee'
+        indexes = [
+            models.Index(fields=[
+                'last_name',
+                'first_name',
+                'middle_name',
+                'pinfl'
+            ]),
         ]

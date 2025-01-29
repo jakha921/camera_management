@@ -1,23 +1,21 @@
-import json
 from datetime import time
-from io import BytesIO
+from functools import lru_cache
 
-import openpyxl
-import pandas as pd
 from django.contrib import admin
-from django.db import connection, models
+from django.db import models
+from django.db.models import Subquery, OuterRef, Min, Max
 from django.forms import Textarea
-from django.http import HttpResponse
 from django.urls import reverse
 from django.utils.html import format_html
-from django.utils.safestring import mark_safe
-from openpyxl.styles import Font, PatternFill
-from openpyxl.utils import get_column_letter
-from openpyxl.workbook import Workbook
 
-from attendance.filters import ComeLateFilter
-from attendance.models import Attendance
-from attendance.utils import calculate_similarity
+from attendance.admin_tools.actions import (
+    absent_report_by_pinfl,
+    attendance_report_by_pinfl
+)
+from attendance.admin_tools.filters import ComeLateFilter, WentEarlyFilter
+from attendance.admin_tools.helpers import calculate_working_hours, get_time_for_condition, \
+    format_time_with_color
+from attendance.models import Attendance, Employee
 
 # Register your models here.
 admin.site.site_header = 'Ishchilarning kelib ketish sistemase'
@@ -25,22 +23,27 @@ admin.site.site_title = 'Ishchilarning kelib ketish sistemase'
 admin.site.index_title = 'Ishchilarning kelib ketish sistemase'
 
 
+@lru_cache(maxsize=10000)
+def get_time_for_condition(pinfl, date, is_in, agg_type):
+    """Cache database queries for time aggregation."""
+    return Attendance.objects.filter(pinfl=pinfl, date=date, is_in=is_in).aggregate(
+        result=Min('time') if agg_type == "MIN" else Max('time')
+    )['result']
+
+
 @admin.register(Attendance)
-class QuestionAdmin(admin.ModelAdmin):
-    # list_display = ['device_id', 'name', 'date', 'time', 'color_status']
-    list_display = ['device_id', 'name', 'date', 'min_in_time', 'max_out_time', 'working_time', 'description']
+class AttendanceAdmin(admin.ModelAdmin):
+    list_display = ['pinfl', 'name', 'date', 'min_in_time', 'max_out_time', 'working_time', 'description']
     search_fields = ['name', 'device_id', 'pinfl']
-    list_filter = [ComeLateFilter]
+    list_filter = [ComeLateFilter, WentEarlyFilter]
     ordering = ['-date', '-time']
     list_per_page = 15
     list_max_show_all = 100
     date_hierarchy = 'date'
     actions = [
-        'attendance_report',
-        'absent_report',
-        'absent_report_by_pinfl',
-        'attendance_report_by_pinfl',
-
+        # attendance_report,
+        absent_report_by_pinfl,
+        attendance_report_by_pinfl,
     ]
     readonly_fields = ['device_id']
 
@@ -51,566 +54,85 @@ class QuestionAdmin(admin.ModelAdmin):
         models.TextField: {'widget': Textarea(attrs={'rows': 2, 'cols': 30})},
     }
 
-    # if user is not superuser remove clickable field
-    def get_readonly_fields(self, request, obj=None):
-        if not request.user.is_superuser:
-            return [f.name for f in self.model._meta.fields]
-        return []
+    def get_queryset(self, request):
+        """
+        Overriding get_queryset to eliminate duplicates by grouping by unique identifiers.
+        """
+        qs = super().get_queryset(request)
 
-    def color_status(self, obj):
-        if obj.status_color == 'red':
-            # show red circle if time > 09:01:00
-            return mark_safe('<span style="color: red;">&#11044;</span>')
-        elif obj.status_color == 'yellow':
-            return mark_safe('<span style="color: yellow;">&#11044;</span>')
-        else:
-            return mark_safe('<span style="color: green;">&#11044;</span>')
+        # Subquery to get the earliest record for each pinfl and date
+        subquery = qs.filter(
+            pinfl=OuterRef('pinfl'),
+            date=OuterRef('date')
+        ).order_by('id').values('id')[:1]
 
-    color_status.short_description = 'Status'
-    readonly_fields = ['color_status']
+        # Filter the queryset to include only the earliest record for each group
+        return qs.filter(id__in=Subquery(subquery))
 
     def min_in_time(self, obj):
-        """
-        Возвращает минимальное время входа с цветовой индикацией:
-        > 09:00 -> красным, иначе зелёным
-        """
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT MIN(b.time)
-                FROM public.attendance AS b
-                WHERE is_in = True AND b.device_id = %s AND b.date = %s
-            """, [obj.device_id, obj.date])
-            row = cursor.fetchone()
-
-        if not row or not row[0]:
-            # Если нет данных, показываем прочерк
-            return format_html('<span>-</span>')
-
+        min_time = get_time_for_condition(obj.pinfl, obj.date, True, "MIN")
         min_in_url = reverse('admin:attendance_attendance_change', args=[obj.pk])
-
-        # row[0] предполагается объектом datetime.time (или datetime.datetime)
-        min_time = row[0]
-
-        # Условие: если пришёл позже 9:00
-        if min_time > time(9, 5):
-            color = "red"
-        else:
-            color = "green"
-
-        return format_html(
-            '<a href="{}" style="color: {};">{}</a>',
-            min_in_url,
-            color,
-            min_time.strftime('%H:%M')
-        )
+        return format_time_with_color(min_time, time(9, 5), lambda x, y: x <= y, min_in_url)
 
     min_in_time.short_description = 'Keldi'
 
     def max_out_time(self, obj):
-        """
-        Возвращает максимальное время выхода с цветовой индикацией:
-        < 18:00 -> красным, иначе зелёным
-        """
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT MAX(b.time)
-                FROM public.attendance AS b
-                WHERE is_in = False AND b.device_id = %s AND b.date = %s
-            """, [obj.device_id, obj.date])
-            row = cursor.fetchone()
-
-        if not row or not row[0]:
-            return format_html('<span>-</span>')
-
+        max_time = get_time_for_condition(obj.pinfl, obj.date, False, "MAX")
         max_out_url = reverse('admin:attendance_attendance_change', args=[obj.pk])
-        max_time = row[0]
-
-        # Условие: если ушёл раньше 18:00
-        if max_time < time(18, 0):
-            color = "red"
-        else:
-            color = "green"
-
-        return format_html(
-            '<a href="{}" style="color: {};">{}</a>',
-            max_out_url,
-            color,
-            max_time.strftime('%H:%M')
-        )
+        return format_time_with_color(max_time, time(18, 0), lambda x, y: x >= y, max_out_url)
 
     max_out_time.short_description = 'Ketdi'
 
-    def changelist_view(self, request, extra_context=None):
-        if not request.GET.get('is_in__exact'):
-            q = request.GET.copy()
-            q['is_in__exact'] = 'True'
-            request.GET = q
-            request.META['QUERY_STRING'] = request.GET.urlencode()
-        return super().changelist_view(request, extra_context=extra_context)
-
     def working_time(self, obj):
-        """
-        Возвращает рабочее время в формате "ЧЧ:ММ".
-        1) Обрезаем (09:00 .. 18:00).
-        2) Считаем разницу прихода и ухода.
-        3) Если > 6ч, вычитаем 1 час на обед (пример).
-        4) Выводим HH:MM.
-        """
-        from datetime import time
-        from django.db import connection
-        from django.utils.html import format_html
+        min_time = get_time_for_condition(obj.pinfl, obj.date, True, "MIN")
+        max_time = get_time_for_condition(obj.pinfl, obj.date, False, "MAX")
 
-        # 1. Получаем min_time (приход)
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT MIN(b.time)
-                FROM public.attendance AS b
-                WHERE is_in = True AND b.device_id = %s AND b.date = %s
-            """, [obj.device_id, obj.date])
-            row_in = cursor.fetchone()
-        min_time = row_in[0] if row_in and row_in[0] else None
-
-        # 2. Получаем max_time (уход)
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                SELECT MAX(b.time)
-                FROM public.attendance AS b
-                WHERE is_in = False AND b.device_id = %s AND b.date = %s
-            """, [obj.device_id, obj.date])
-            row_out = cursor.fetchone()
-        max_time = row_out[0] if row_out and row_out[0] else None
-
-        # Нет данных?
         if not min_time or not max_time:
-            return format_html("<span>-</span>")
+            return format_html('<span>-</span>')
 
-        # "Обрезаем" время
-        if min_time < time(9, 5):
-            min_time = time(9, 0)
-        if max_time > time(18, 0):
-            max_time = time(18, 0)
+        # Adjust times to working hours
+        min_time = max(min_time, time(9, 0))
+        max_time = min(max_time, time(18, 0))
 
-        # Переводим time -> секунды
-        def time_to_seconds(t: time) -> int:
-            return t.hour * 3600 + t.minute * 60 + t.second
+        diff_str, hours = calculate_working_hours(min_time, max_time)
+        color = "green" if hours >= 8 else "red"
 
-        in_sec = time_to_seconds(min_time)
-        out_sec = time_to_seconds(max_time)
-        diff_sec = out_sec - in_sec
-
-        if diff_sec <= 0:
-            return format_html("<span>-</span>")
-
-        # --- Если нужно учесть обед (пример) ---
-        # Если работал больше 6 часов, вычитаем 1 час:
-        if diff_sec >= 6 * 3600:
-            diff_sec -= 3600  # вычитание часа
-
-        # Часы и минуты
-        hours = diff_sec // 3600
-        minutes = (diff_sec % 3600) // 60
-
-        # Пример форматирования: "7:59"
-        diff_str = f"{hours}:{minutes:02d}"
-
-        # Хотите подсветить по цвету? Например, зелёный, если >= 8 часов:
-        # (учтите, что теперь мы уже вычли обед)
-        color = "green" if (hours >= 8) else "red"
-
-        return format_html(
-            '<span style="color: {};">{}</span>',
-            color,
-            diff_str
-        )
+        return format_html('<span style="color: {};">{}</span>', color, diff_str)
 
     working_time.short_description = 'Ish vaqti (soat)'
 
-    # actions
-    def attendance_report(self, request, queryset):
+    def get_list_display(self, request):
         """
-        Выгружает данные в формат XLSX:
-        - №
-        - FIO
-        - Sana (дата)
-        - Keldi (приход)
-        - Ketdi (уход)
-        - Ish vaqti (соат)
-        с логикой цветов:
-            - Keldi красный, если > 9:00, иначе зелёный
-            - Ketdi красный, если < 18:00, иначе зелёный
-            - Ish vaqti красный, если < 8, иначе зелёный
+        Dynamically update list_display based on the presence of pinfl.
+        If pinfl exists, display the employee full name instead of name and set pinfl to device_id.
         """
-        # 1) Создаём рабочую книгу
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "Attendance"
+        if Attendance.objects.filter(pinfl__isnull=False).exists():
+            return ['pinfl', 'employee', 'date', 'min_in_time', 'max_out_time', 'working_time', 'description']
+        return ['device_id', 'name', 'date', 'min_in_time', 'max_out_time', 'working_time', 'description']
 
-        # 2) Шапка
-        headers = ["№", "FIO", "Sana", "Keldi", "Ketdi", "Ish vaqti (soat)", "Izoh"]
-        ws.append(headers)
+    def employee(self, obj):
+        if obj.pinfl:
+            employee = Employee.objects.filter(pinfl=obj.pinfl).first()
+            if employee:
+                return f"{employee.last_name} {employee.first_name}"
+        return obj.name
 
-        # Настроим для шапки жирный шрифт, например
-        bold_font = Font(bold=True)
-        header_fill = PatternFill("solid", fgColor="D9D9D9")
+    employee.short_description = 'Employee'
 
-        for col_index, cell in enumerate(ws[1], start=1):
-            cell.font = bold_font
-            cell.fill = header_fill
-            # Автоширина (немного «хак»: потом можно подобрать свои размеры)
-            ws.column_dimensions[get_column_letter(col_index)].width = 18
+    def pinfl(self, obj):
+        return obj.pinfl or obj.device_id
 
-        # 3) Проходимся по queryset и заполняем строки
-        # Нам нужны те же вычисления, что и в админке: min_in_time, max_out_time, working_time.
-        # Можно вынести эти методы в модель, чтобы не дублировать код, но для примера сделаем здесь.
+    pinfl.short_description = 'PINFL / Device ID'
 
-        # Вспомогательная функция для перевода time -> seconds
-        def time_to_seconds(t: time) -> int:
-            return t.hour * 3600 + t.minute * 60 + t.second
 
-        row_num = 2  # начинаем со второй строки (первая - заголовки)
+@admin.register(Employee)
+class EmployeeAdmin(admin.ModelAdmin):
+    list_display = ['last_name', 'first_name', 'middle_name', 'dob', 'description']
+    search_fields = ['last_name', 'first_name', 'middle_name', 'pinfl']
+    list_per_page = 15
+    readonly_fields = ['pinfl']
 
-        for index, item in enumerate(queryset, start=1):
-            # ---- Получаем поля ----
-            fio = item.name
-            sana = item.date.strftime("%d-%m-%Y") if item.date else ""
-
-            # --- min_in_time ---
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT MIN(b.time)
-                    FROM public.attendance AS b
-                    WHERE is_in = True AND b.device_id = %s AND b.date = %s
-                """, [item.device_id, item.date])
-                row_in = cursor.fetchone()
-            min_time = row_in[0] if row_in and row_in[0] else None
-            # Обрезаем время прихода к 9:00, если < 9:00
-            # if min_time and min_time < time(9, 0):
-            #     min_time = time(9, 0)
-
-            # --- max_out_time ---
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT MAX(b.time)
-                    FROM public.attendance AS b
-                    WHERE is_in = False AND b.device_id = %s AND b.date = %s
-                """, [item.device_id, item.date])
-                row_out = cursor.fetchone()
-            max_time = row_out[0] if row_out and row_out[0] else None
-            # Обрезаем время ухода к 18:00, если > 18:00
-            # if max_time and max_time > time(18, 0):
-            #     max_time = time(18, 0)
-
-            # Превращаем в строки для Excel
-            if min_time:
-                keldi_str = min_time.strftime('%H:%M')
-            else:
-                keldi_str = '-'
-            if max_time:
-                ketdi_str = max_time.strftime('%H:%M')
-            else:
-                ketdi_str = '-'
-
-            # ---- working_time ----
-            if min_time and max_time:
-                diff_sec = time_to_seconds(max_time) - time_to_seconds(min_time)
-                if diff_sec < 0:
-                    diff_sec = 0
-                hours = diff_sec // 3600
-                minutes = (diff_sec % 3600) // 60
-                ish_time_str = f"{hours}:{minutes:02d}"
-            else:
-                ish_time_str = "-"
-
-            # 4) Записываем всё в XLS
-            row_values = [
-                index,  # №
-                fio,  # FIO
-                sana,  # Sana
-                keldi_str,  # Keldi
-                ketdi_str,  # Ketdi
-                ish_time_str,  # Ish vaqti (soat)
-                item.description,  # Izoh
-            ]
-            ws.append(row_values)
-
-            # 5) Логика по цветам
-            #    Для ячеек Keldi (колонка 4), Ketdi (5), Ish vaqti (6)
-            keldi_cell = ws.cell(row=row_num, column=4)
-            ketdi_cell = ws.cell(row=row_num, column=5)
-            ish_cell = ws.cell(row=row_num, column=6)
-
-            # Keldi: красный, если > 9:00
-            if min_time == "-":
-                pass
-            elif min_time and min_time > time(9, 5):
-                keldi_cell.fill = PatternFill("solid", fgColor="FFC7CE")  # розовато-красный
-            else:
-                # Можно зелёный
-                keldi_cell.fill = PatternFill("solid", fgColor="C6EFCE")
-
-            # Ketdi: красный, если < 18:00 (и не '-')
-            if max_time == "-":
-                pass
-            elif max_time and max_time < time(18, 0):
-                ketdi_cell.fill = PatternFill("solid", fgColor="FFC7CE")
-            else:
-                ketdi_cell.fill = PatternFill("solid", fgColor="C6EFCE")
-
-            # Ish vaqti: если >= 8 часов — зелёный, иначе красный
-            if ish_time_str != "-":
-                # hours:minutes
-                parts = ish_time_str.split(":")
-                if len(parts) == 2:
-                    h = int(parts[0])
-                    # m = int(parts[1]) -- минута при желании
-                    if h >= 8:
-                        ish_cell.fill = PatternFill("solid", fgColor="C6EFCE")  # зелёный
-                    else:
-                        ish_cell.fill = PatternFill("solid", fgColor="FFC7CE")  # красный
-            # Иначе "-" не красим или как-то по-другому
-
-            row_num += 1
-
-        # 6) Готовим HttpResponse с XLSX
-        response = HttpResponse(
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        # Получение даты из параметров
-        selected_date = f"{request.GET.get('date__year', 'unknown')}-{request.GET.get('date__month', 'unknown')}-{request.GET.get('date__day', 'unknown')}"
-        if selected_date == "unknown-unknown-unknown":
-            selected_date = "attendance_report.xlsx"  # Если дата не указана, использовать дефолтное имя
-        else:
-            selected_date += "_attendance_report.xlsx"
-
-        response['Content-Disposition'] = 'attachment; filename=' + selected_date
-
-        wb.save(response)
-        return response
-
-    attendance_report.short_description = 'Davomat haqida hisobotni excelga yuklash (XLSX)'
-
-    def absent_report(self, request, queryset):
-        """
-        Генерация отчета по отсутствующим сотрудникам.
-        """
-        # Загрузка данных
-        df_employees_data = pd.read_csv('attendance/employees_data.csv')
-        df_face_control = pd.DataFrame.from_records(
-            queryset.values('name', 'date', 'device_id')
-        )
-
-        # Получение полного списка сотрудников и присутствующих
-        all_employees = df_employees_data['last_name'] + " " + df_employees_data['first_name']
-        attended = df_face_control['name'].str.strip().drop_duplicates()
-
-        # Список отсутствующих
-        absent_employees = [
-            employee for employee in all_employees
-            if not calculate_similarity(employee, attended)
-        ]
-
-        print('-' * 20)
-        print('attended:', len(attended))
-        print('absent_employees:', len(absent_employees))
-        print('all_employees:', len(all_employees))
-
-        # Генерация DataFrame с результатами
-        report_df = pd.DataFrame({
-            'Absent Employees': absent_employees
-        })
-
-        # Сохранение в Excel
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            report_df.to_excel(writer, index=False, sheet_name='Absent Report')
-
-        # Отправка файла как ответа
-        response = HttpResponse(
-            output.getvalue(),
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-
-        # Получение даты из параметров
-        selected_date = f"{request.GET.get('date__year', 'unknown')}-{request.GET.get('date__month', 'unknown')}-{request.GET.get('date__day', 'unknown')}"
-        if selected_date == "unknown-unknown-unknown":
-            selected_date = "absent_report.xlsx"  # Если дата не указана, использовать дефолтное имя
-        else:
-            selected_date += "_absent_report.xlsx"
-
-        print('selected_date:', selected_date)
-
-        response['Content-Disposition'] = 'attachment; filename=' + selected_date
-        return response
-
-    absent_report.short_description = "Ro'yxatdan o'tmangan ishchilar haqida hisobotni excelga yuklash (XLSX)"
-
-    def absent_report_by_pinfl(self, request, queryset):
-        """
-        Генерация отчета по отсутствующим сотрудникам на основе PINFL.
-        """
-        # Load employee data from JSON file
-        try:
-            with open('employees_data.json', 'r') as file:
-                employees_data = json.load(file)
-        except FileNotFoundError:
-            self.message_user(request, "Файл employees_data.json не найден.", level='error')
-            return
-
-        # Extract all employees' PINFLs and details
-        all_employees = {pinfl: data for pinfl, data in employees_data.items()}
-
-        # Get PINFLs of employees who attended
-        attended_pinfls = set(queryset.values_list('pinfl', flat=True))
-
-        # Identify absent employees by PINFL
-        absent_employees = [
-            {
-                'PINFL': pinfl,
-                'Last Name': data['last_name'],
-                'First Name': data['first_name'],
-                # 'Middle Name': data.get('middle_name', ''),
-                # 'Date of Birth': data.get('dob', ''),
-                'Position': data.get('position', ''),
-            }
-            for pinfl, data in all_employees.items()
-            if pinfl not in attended_pinfls
-        ]
-
-        # Convert absent employees to DataFrame for export
-        report_df = pd.DataFrame(absent_employees)
-
-        # Save to Excel
-        output = BytesIO()
-        with pd.ExcelWriter(output, engine='openpyxl') as writer:
-            report_df.to_excel(writer, index=False, sheet_name='Absent Report')
-
-        # Prepare HTTP response
-        response = HttpResponse(
-            output.getvalue(),
-            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        )
-
-        # Generate filename
-        selected_date = f"{request.GET.get('date__year', 'unknown')}-{request.GET.get('date__month', 'unknown')}-{request.GET.get('date__day', 'unknown')}"
-        filename = f"{selected_date}_absent_report_by_pinfl.xlsx" if selected_date != "unknown-unknown-unknown" else "absent_report_by_pinfl.xlsx"
-
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        return response
-
-    absent_report_by_pinfl.short_description = "Ro'yxatdan o'tmangan ishchilar haqida hisobot (PINFL)"
-
-    def attendance_report_by_pinfl(self, request, queryset):
-        """
-        Generates an Excel attendance report including PINFL and validation
-        with last_name and first_name from employees_data.json.
-        """
-        # Load employee data from JSON file
-        try:
-            with open('employees_data.json', 'r') as file:
-                employees_data = json.load(file)
-        except FileNotFoundError:
-            self.message_user(request, "File employees_data.json not found.", level='error')
-            return
-
-        # Create workbook and worksheet
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Attendance"
-
-        # Define headers
-        headers = [
-            "No.", "FIO", "PINFL", "Last Name (Verified)", "First Name (Verified)", "Date", "Check-In", "Check-Out",
-            "Working Hours", "Description"
-        ]
-        ws.append(headers)
-
-        # Apply header styles
-        bold_font = Font(bold=True)
-        header_fill = PatternFill("solid", fgColor="D9D9D9")
-        for col_index, cell in enumerate(ws[1], start=1):
-            cell.font = bold_font
-            cell.fill = header_fill
-            ws.column_dimensions[get_column_letter(col_index)].width = 18
-
-        # Helper function to convert time to seconds
-        def time_to_seconds(t: time) -> int:
-            return t.hour * 3600 + t.minute * 60 + t.second
-
-        row_num = 2  # Start filling rows after the header
-
-        for index, item in enumerate(queryset, start=1):
-            # Get fields from the Attendance model
-            fio = item.name
-            pinfl = item.pinfl or "-"
-            date = item.date.strftime("%d-%m-%Y") if item.date else "-"
-            description = item.description or "-"
-
-            # Check min_in_time
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT MIN(b.time)
-                    FROM public.attendance AS b
-                    WHERE is_in = True AND b.device_id = %s AND b.date = %s
-                    """,
-                    [item.device_id, item.date]
-                )
-                min_time_row = cursor.fetchone()
-            min_time = min_time_row[0] if min_time_row and min_time_row[0] else None
-            check_in = min_time.strftime('%H:%M') if min_time else "-"
-
-            # Check max_out_time
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT MAX(b.time)
-                    FROM public.attendance AS b
-                    WHERE is_in = False AND b.device_id = %s AND b.date = %s
-                    """,
-                    [item.device_id, item.date]
-                )
-                max_time_row = cursor.fetchone()
-            max_time = max_time_row[0] if max_time_row and max_time_row[0] else None
-            check_out = max_time.strftime('%H:%M') if max_time else "-"
-
-            # Calculate working hours
-            if min_time and max_time:
-                diff_sec = time_to_seconds(max_time) - time_to_seconds(min_time)
-                if diff_sec < 0:
-                    diff_sec = 0
-                hours = diff_sec // 3600
-                minutes = (diff_sec % 3600) // 60
-                working_hours = f"{hours}:{minutes:02d}"
-            else:
-                working_hours = "-"
-
-            # Verify PINFL data
-            verified_last_name = "-"
-            verified_first_name = "-"
-
-            if pinfl in employees_data:
-                employee = employees_data[pinfl]
-                verified_last_name = employee.get("last_name", "-")
-                verified_first_name = employee.get("first_name", "-")
-
-            # Append data to the worksheet
-            row_values = [
-                index, fio, pinfl, verified_last_name, verified_first_name, date, check_in, check_out, working_hours,
-                description
-            ]
-            ws.append(row_values)
-
-        # Prepare Excel response
-        response = HttpResponse(
-            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
-
-        selected_date = f"{request.GET.get('date__year', 'unknown')}-{request.GET.get('date__month', 'unknown')}-{request.GET.get('date__day', 'unknown')}"
-        filename = f"{selected_date}_attendance_report_with_pinfl.xlsx" if selected_date != "unknown-unknown-unknown" else "attendance_report_with_pinfl.xlsx"
-
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-        wb.save(response)
-        return response
-
-    attendance_report_by_pinfl.short_description = "Davomat hisobotini PINFL bilan yuklash (XLSX)"
+    def get_readonly_fields(self, request, obj=None):
+        if not request.user.is_superuser:
+            return [f.name for f in self.model._meta.fields]
+        return []

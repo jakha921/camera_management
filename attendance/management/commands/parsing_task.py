@@ -1,7 +1,7 @@
 # attendance/management/commands/rundatatask.py
 
 from django.core.management.base import BaseCommand
-from attendance.tasks import run_parsing
+from scripts.data_set import run_parsing
 
 
 class Command(BaseCommand):
