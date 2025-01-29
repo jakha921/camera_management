@@ -324,9 +324,16 @@ def attendance_report_by_pinfl(self, request, queryset):
 
         # Calculate working hours
         if min_time and max_time:
+            # Adjust times to working hours
+            min_time = max(min_time, time(9, 0))
+            max_time = min(max_time, time(18, 0))
+
             diff_sec = time_to_seconds(max_time) - time_to_seconds(min_time)
-            if diff_sec < 0:
+            if diff_sec <= 0:
                 diff_sec = 0
+            elif diff_sec >= 6 * 3600:
+                diff_sec -= 3600
+
             hours = diff_sec // 3600
             minutes = (diff_sec % 3600) // 60
             working_hours = f"{hours}:{minutes:02d}"
@@ -349,7 +356,7 @@ def attendance_report_by_pinfl(self, request, queryset):
         ish_cell = ws.cell(row=row_num, column=8)  # Ish vaqti
 
         # Keldi: Red if > 09:00
-        if min_time and min_time > time(9, 0):
+        if min_time and min_time > time(9, 5):
             keldi_cell.fill = PatternFill("solid", fgColor="FFC7CE")  # Red
         elif min_time:
             keldi_cell.fill = PatternFill("solid", fgColor="C6EFCE")  # Green
