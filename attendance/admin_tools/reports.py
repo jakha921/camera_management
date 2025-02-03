@@ -36,6 +36,8 @@ def working_time(self, obj):
     # Нет данных?
     if not min_time or not max_time:
         return format_html("<span>-</span>")
+    elif max_time < min_time:
+        return format_html("<span>-</span>")
 
     # "Обрезаем" время
     if min_time < time(9, 5):
