@@ -33,7 +33,7 @@ def get_time_for_condition(pinfl, date, is_in, agg_type):
 
 @admin.register(Attendance)
 class AttendanceAdmin(admin.ModelAdmin):
-    list_display = ['pinfl', 'name', 'date', 'min_in_time', 'max_out_time', 'working_time', 'description']
+    list_display = ['pinfl_display', 'name', 'date', 'min_in_time', 'max_out_time', 'working_time', 'description']
     search_fields = ['name', 'device_id', 'pinfl']
     list_filter = [ComeLateFilter, WentEarlyFilter]
     ordering = ['-date', '-time']
@@ -90,6 +90,8 @@ class AttendanceAdmin(admin.ModelAdmin):
 
         if not min_time or not max_time:
             return format_html('<span>-</span>')
+        elif max_time < min_time:
+            return format_html('<span>-</span>')
 
         # Adjust times to working hours
         min_time = max(min_time, time(9, 0))
@@ -108,7 +110,7 @@ class AttendanceAdmin(admin.ModelAdmin):
         If pinfl exists, display the employee full name instead of name and set pinfl to device_id.
         """
         if Attendance.objects.filter(pinfl__isnull=False).exists():
-            return ['pinfl', 'employee', 'date', 'min_in_time', 'max_out_time', 'working_time', 'description']
+            return ['pinfl_display', 'employee', 'date', 'min_in_time', 'max_out_time', 'working_time', 'description']
         return ['device_id', 'name', 'date', 'min_in_time', 'max_out_time', 'working_time', 'description']
 
     def employee(self, obj):
@@ -120,10 +122,10 @@ class AttendanceAdmin(admin.ModelAdmin):
 
     employee.short_description = 'Employee'
 
-    def pinfl(self, obj):
+    def pinfl_display(self, obj):
         return obj.pinfl or obj.device_id
 
-    pinfl.short_description = 'PINFL / Device ID'
+    pinfl_display.short_description = 'PINFL / Device ID'
 
 
 @admin.register(Employee)
