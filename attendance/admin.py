@@ -130,8 +130,8 @@ class AttendanceAdmin(admin.ModelAdmin):
 
 @admin.register(Employee)
 class EmployeeAdmin(admin.ModelAdmin):
-    list_display = ['last_name', 'first_name', 'middle_name', 'dob', 'description']
+    list_display = ['last_name', 'first_name', 'pinfl', 'dob', 'description', 'types']
     search_fields = ['last_name', 'first_name', 'middle_name', 'pinfl']
     list_per_page = 15
-    readonly_fields = ['pinfl']
-
+    # readonly_fields = ['pinfl']
+    list_editable = ['types']

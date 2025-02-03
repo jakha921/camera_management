@@ -44,6 +44,15 @@ class Employee(models.Model):
     description = models.TextField(blank=True, null=True, verbose_name='Izoh')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    types = models.CharField(max_length=20, blank=True, null=True, verbose_name='Xodim turi',
+                             choices=[
+                                 ('employee', 'Pesonal xodimlar'),
+                                 ('exact_sciences', 'Aniq, texnika va tabiiy fanlar kafedrasi'),
+                                 ('economy', 'Iqtisodiyot va axborot texnologiyalari kafedrasi'),
+                                 ('linguistic', 'Filologiya va tillarni o\'qitish kafedrasi'),
+                                 ('social', 'Ijtimoiy-gumanitar fanlar kafedrasi'),
+
+                             ])
 
     def __str__(self):
         return f"{self.last_name} {self.first_name} {self.middle_name}"
