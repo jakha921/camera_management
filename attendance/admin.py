@@ -12,7 +12,7 @@ from attendance.admin_tools.actions import (
     absent_report_by_pinfl,
     attendance_report_by_pinfl
 )
-from attendance.admin_tools.filters import ComeLateFilter, WentEarlyFilter
+from attendance.admin_tools.filters import ComeLateFilter, WentEarlyFilter, EmployeeTypeFilter
 from attendance.admin_tools.helpers import calculate_working_hours, get_time_for_condition, \
     format_time_with_color
 from attendance.models import Attendance, Employee
@@ -130,8 +130,13 @@ class AttendanceAdmin(admin.ModelAdmin):
 
 @admin.register(Employee)
 class EmployeeAdmin(admin.ModelAdmin):
-    list_display = ['last_name', 'first_name', 'pinfl', 'dob', 'description', 'types']
+    list_display = ['last_name', 'first_name', 'pinfl', 'description', 'images_preview']
     search_fields = ['last_name', 'first_name', 'middle_name', 'pinfl']
-    list_per_page = 15
+    list_per_page = 50
     # readonly_fields = ['pinfl']
-    list_editable = ['types']
+    list_filter = [EmployeeTypeFilter]
+
+    def images_preview(self, obj):
+        return format_html('<img src="{}" width="50" height="75" />', obj.image.url) if obj.image else '-'
+
+    images_preview.short_description = 'Rasm'

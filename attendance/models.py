@@ -44,6 +44,8 @@ class Employee(models.Model):
     description = models.TextField(blank=True, null=True, verbose_name='Izoh')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    image = models.ImageField(upload_to='employee/', blank=True, null=True, verbose_name='Rasm')
+    bid = models.CharField(max_length=20, blank=True, null=True, verbose_name='Stavka')
     types = models.CharField(max_length=20, blank=True, null=True, verbose_name='Xodim turi',
                              choices=[
                                  ('employee', 'Pesonal xodimlar'),
