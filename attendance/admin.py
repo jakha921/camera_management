@@ -78,7 +78,7 @@ class AttendanceAdmin(admin.ModelAdmin):
 
     def max_out_time(self, obj):
         max_time = get_time_for_condition(obj.pinfl, obj.date, False, "MAX")
-        # print('max_time:', obj.pinfl, obj.name, obj.date, max_time)
+        print('max_time:', obj.pinfl, obj.name, obj.date, max_time)
         max_out_url = reverse('admin:attendance_attendance_change', args=[obj.pk])
         return format_time_with_color(max_time, time(18, 0), lambda x, y: x >= y, max_out_url)
 
@@ -135,6 +135,7 @@ class EmployeeAdmin(admin.ModelAdmin):
     list_per_page = 50
     # readonly_fields = ['pinfl']
     list_filter = [EmployeeTypeFilter]
+    ordering = ['image', 'last_name', 'first_name']
 
     def images_preview(self, obj):
         return format_html('<img src="{}" width="50" height="75" />', obj.image.url) if obj.image else '-'
