@@ -46,13 +46,22 @@ class AttendanceAdmin(admin.ModelAdmin):
         attendance_report_by_pinfl,
     ]
     readonly_fields = ['device_id']
-
     list_editable = ['description']
 
     # Уменьшаем размер поля "description"
     formfield_overrides = {
         models.TextField: {'widget': Textarea(attrs={'rows': 2, 'cols': 30})},
     }
+
+    def get_list_display_links(self, request, list_display):
+        if request.user.is_superuser:
+            return ['pinfl_display', 'name']
+        return []
+
+    def get_readonly_fields(self, request, obj=None):
+        if request.user.is_superuser:
+            return []
+        return ['device_id', 'pinfl', 'name', 'date', 'time', 'is_in', 'card', 'status_color']
 
     def get_queryset(self, request):
         """
